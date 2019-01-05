@@ -28,7 +28,8 @@ var Superhero,
   UserWithRenamedColumns,
   PostWithStringIdAndRenamedColumns,
   Employee,
-  PostWithDisableDefaultSort;
+  PostWithDisableDefaultSort,
+  WithEmbeddedBinaryProperties;
 
 describe('lazyConnect', function() {
   it('should skip connect phase (lazyConnect = true)', function(done) {
@@ -254,6 +255,13 @@ describe('mongodb connector', function() {
     Category = db.define('Category', {
       title: {type: String, length: 255, index: true},
       posts: {type: [db.ObjectID], index: true},
+    }, {
+      indexes: {
+        'title_case_insensitive': {
+          keys: {title: 1},
+          options: {collation: {locale: 'en', strength: 1}},
+        },
+      },
     });
 
     PostWithStringIdAndRenamedColumns = db.define(
@@ -287,6 +295,19 @@ describe('mongodb connector', function() {
       }
     );
 
+    WithEmbeddedBinaryProperties = db.define(
+      'WithEmbeddedBinaryProperties',
+      {
+        name: {type: String},
+        image: {
+          type: {
+            label: String,
+            rawImg: Buffer,
+          },
+        },
+      }
+    );
+
     User.hasMany(Post);
     Post.belongsTo(User);
   });
@@ -300,7 +321,9 @@ describe('mongodb connector', function() {
             PostWithNumberUnderscoreId.destroyAll(function() {
               PostWithStringId.destroyAll(function() {
                 PostWithDisableDefaultSort.destroyAll(function() {
-                  done();
+                  Category.destroyAll(function() {
+                    done();
+                  });
                 });
               });
             });
@@ -494,6 +517,23 @@ describe('mongodb connector', function() {
     });
   });
 
+  it('should create case insensitive indexes', function(done) {
+    db.automigrate('Category', function() {
+      db.connector.db.collection('Category').indexes(function(err, result) {
+        if (err) return done(err);
+        var indexes = [
+          {name: '_id_', key: {_id: 1}},
+          {name: 'title_1', key: {title: 1}},
+          {name: 'title_case_insensitive', key: {title: 1}, collation: {locale: 'en', strength: 1}},
+          {name: 'posts_1', key: {posts: 1}},
+        ];
+
+        result.should.containDeep(indexes);
+        done();
+      });
+    });
+  });
+
   it('should have created models with correct _id types', function(done) {
     PostWithObjectId.definition.properties._id.type.should.be.equal(
       db.ObjectID
@@ -637,6 +677,19 @@ describe('mongodb connector', function() {
     User.create({name: 'John', icon: new Buffer('1a2')}, function(e, u) {
       User.findById(u.id, function(e, user) {
         user.icon.should.be.an.instanceOf(Buffer);
+        done();
+      });
+    });
+  });
+
+  it('should convert embedded model binary properties to buffer correctly', function(done) {
+    const entity = {
+      name: 'Rigas',
+      image: {label: 'paris 2016', rawImg: Buffer.from([255, 216, 255, 224])},
+    };
+    WithEmbeddedBinaryProperties.create(entity, function(e, r) {
+      WithEmbeddedBinaryProperties.findById(r.id, function(e, post) {
+        post.image.rawImg.should.be.eql(Buffer.from([255, 216, 255, 224]));
         done();
       });
     });
@@ -1155,7 +1208,7 @@ describe('mongodb connector', function() {
               err.name.should.equal('MongoError');
               err.errmsg.should.equal(
                 'The dollar ($) prefixed ' +
-                  "field '$rename' in '$rename' is not valid for storage."
+                "field '$rename' in '$rename' is not valid for storage."
               );
               done();
             }
@@ -1180,7 +1233,7 @@ describe('mongodb connector', function() {
               err.name.should.equal('MongoError');
               err.errmsg.should.equal(
                 'The dollar ($) prefixed ' +
-                  "field '$rename' in '$rename' is not valid for storage."
+                "field '$rename' in '$rename' is not valid for storage."
               );
               done();
             }
@@ -1237,7 +1290,7 @@ describe('mongodb connector', function() {
               err.name.should.equal('MongoError');
               err.errmsg.should.equal(
                 'The dollar ($) prefixed ' +
-                  "field '$rename' in '$rename' is not valid for storage."
+                "field '$rename' in '$rename' is not valid for storage."
               );
               done();
             }
@@ -2652,6 +2705,22 @@ describe('mongodb connector', function() {
     });
   });
 
+  it('should allow to find using case insensitive index', function(done) {
+    Category.create({title: 'My Category'}, function(err, category1) {
+      if (err) return done(err);
+      Category.create({title: 'MY CATEGORY'}, function(err, category2) {
+        if (err) return done(err);
+
+        Category.find({where: {title: 'my cATEGory'}}, {collation: {locale: 'en', strength: 1}},
+          function(err, categories) {
+            if (err) return done(err);
+            categories.should.have.length(2);
+            done();
+          });
+      });
+    });
+  });
+
   it('should allow to find using like', function(done) {
     Post.create({title: 'My Post', content: 'Hello'}, function(err, post) {
       Post.find({where: {title: {like: 'M.+st'}}}, function(err, posts) {
@@ -2921,7 +2990,7 @@ describe('mongodb connector', function() {
 
   it(
     'should support where for count (using renamed columns in deep filter ' +
-      'criteria)',
+    'criteria)',
     function(done) {
       PostWithStringId.create({title: 'My Post', content: 'Hello'}, function(
         err,
